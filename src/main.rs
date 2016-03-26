@@ -13,8 +13,10 @@ Copyright 2016 Avi Weinstock
    See the License for the specific language governing permissions and
    limitations under the License.
 */
+use std::marker::PhantomData;
 
 trait MonoalphabeticCipher {
+    fn new(u8) -> Self;
     fn encrypt_byte(&self, u8) -> u8;
     fn decrypt_byte(&self, u8) -> u8;
 }
@@ -27,6 +29,7 @@ trait SliceCipher {
 struct AsciiCaesar(u8);
 
 impl MonoalphabeticCipher for AsciiCaesar {
+    fn new(k: u8) -> Self { AsciiCaesar(k) }
     fn encrypt_byte(&self, c: u8) -> u8 {
         match c {
             b'A' ... b'Z' => (((c - b'A') + self.0) % 26) + b'A',
@@ -54,9 +57,34 @@ impl<A: MonoalphabeticCipher> SliceCipher for PromoteMonoalphabetic<A> {
     }
 }
 
+struct VigenereCipher<A> {
+    key: Vec<u8>,
+    underlying_cipher: PhantomData<A>,
+}
+
+impl<A: MonoalphabeticCipher> SliceCipher for VigenereCipher<A> {
+    fn encrypt_slice(&self, s: &mut [u8]) {
+        for (i, c) in s.iter_mut().enumerate() {
+            *c = A::new(self.key[i % self.key.len()]).encrypt_byte(*c);
+        }
+    }
+    fn decrypt_slice(&self, s: &mut [u8]) {
+        for (i, c) in s.iter_mut().enumerate() {
+            *c = A::new(self.key[i % self.key.len()]).decrypt_byte(*c);
+        }
+    }
+}
+
+
 fn main() {
-    let mut tmp = b"Hello, world!".to_owned();
-    println!("{}", std::str::from_utf8(&tmp).unwrap());
-    PromoteMonoalphabetic(AsciiCaesar(13)).encrypt_slice(&mut tmp);
-    println!("{}", std::str::from_utf8(&tmp).unwrap());
+    let plaintext = b"Hello, world!".to_vec();
+    println!("{}", std::str::from_utf8(&plaintext).unwrap());
+
+    let mut rot13 = plaintext.clone();
+    PromoteMonoalphabetic(AsciiCaesar(13)).encrypt_slice(&mut rot13);
+    println!("{}", std::str::from_utf8(&rot13).unwrap());
+
+    let mut vigenere = plaintext.clone();
+    VigenereCipher{ key: b"abc".to_vec(), underlying_cipher: PhantomData::<AsciiCaesar> }.encrypt_slice(&mut vigenere);
+    println!("{}", std::str::from_utf8(&vigenere).unwrap());
 }
