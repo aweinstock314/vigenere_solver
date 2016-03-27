@@ -19,13 +19,15 @@ extern crate serde_json;
 use rustc_serialize::hex::ToHex;
 use std::cmp::max;
 use std::collections::HashMap;
+use std::env::args;
 use std::error::Error;
+use std::f64::INFINITY;
 use std::fs::File;
 use std::hash::Hash;
 use std::io;
-use std::ops::{Range, Sub};
 use std::marker::PhantomData;
-use std::f64::INFINITY;
+use std::ops::{Range, Sub};
+use std::process::exit;
 
 trait MonoalphabeticCipher {
     fn new(u8) -> Self;
@@ -268,7 +270,60 @@ fn solve_vigenere<A: MonoalphabeticCipher>(expected_distribution: DistributionVe
     key
 }
 
+enum CryptionDirection { Encrypt, Decrypt }
+
 fn main() {
+    let argv: Vec<String> = args().collect();
+    fn usage() -> ! {
+        println!("Usage: vigenere_solver SUBPROGRAM [ARGS...]");
+        println!("\tngrams n corpus.txt ngrams.json");
+        println!("\t{{en,de}}crypt [asciicaesar, vigenere] key input.ptxt output.ctxt");
+        println!("\tsolve_vigenere [asciicaesar] ngrams.json keylength ngramlength input.ptxt output.ctxt");
+        exit(1);
+    }
+    if argv.len() < 2 { usage(); }
+    match argv[1].as_str() {
+        "ngrams" => {
+            if argv.len() < 5 { usage(); }
+            ngrams_main(&argv[2], &argv[3], &argv[4]);
+        },
+        "encrypt" => {
+            if argv.len() < 6 { usage(); }
+            crypt_main(CryptionDirection::Encrypt, &argv[2], &argv[3], &argv[4], &argv[5]);
+        },
+        "decrypt" => {
+            if argv.len() < 6 { usage(); }
+            crypt_main(CryptionDirection::Decrypt, &argv[2], &argv[3], &argv[4], &argv[5]);
+        },
+        "solve_vigenere" => {
+            if argv.len() < 8 { usage(); }
+            solver_main(&argv[2], &argv[3], &argv[4], &argv[5], &argv[6], &argv[7]);
+        },
+        other => println!("Unrecognized subprogram \"{}\". Options: ngrams, encrypt, decrypt, solve_vigenere", other),
+    }
+}
+
+fn ngrams_main(n: &str, input: &str, output: &str) {
+    let n = usize::from_str_radix(n, 10).expect("couldn't parse n");
+    let mut ngrams = NGrams::new();
+    let corpus = File::open(input).expect("error opening the input for ngrams_main");
+    ngrams.train(n, corpus).expect("error calculating the ngrams model");
+    let mut ngrams_json = File::create(output).expect("error creating the output file");
+    serde_json::to_writer(&mut ngrams_json, &ngrams.serialize()).expect("error writing the json to the output file");
+
+}
+
+fn crypt_main(dir: CryptionDirection, cipher: &str, key: &str, input: &str, output: &str) {
+    unimplemented!();
+}
+
+fn solver_main(cipher: &str, ngrams: &str, keylength: &str, ngramlength: &str, input: &str, output: &str) {
+    // TODO: needs ngrams deserializer
+    unimplemented!();
+}
+
+
+fn old_main() {
     // TODO: multipart command-line tool based on argv ({en,de}crypt, ngrams calculation)
     //let plaintext = b"Hello, world!".to_vec();
     let plaintext = b"His manner was not effusive. It seldom was; but he was glad, I think,
