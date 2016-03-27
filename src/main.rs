@@ -23,12 +23,13 @@ use std::error::Error;
 use std::fs::File;
 use std::hash::Hash;
 use std::io;
-use std::ops::Sub;
+use std::ops::{Range, Sub};
 use std::marker::PhantomData;
 use std::f64::INFINITY;
 
 trait MonoalphabeticCipher {
     fn new(u8) -> Self;
+    fn active_keyspace() -> Range<u8>;
     fn encrypt_byte(&self, u8) -> u8;
     fn decrypt_byte(&self, u8) -> u8;
 }
@@ -41,18 +42,19 @@ trait SliceCipher {
 struct AsciiCaesar(u8);
 
 impl MonoalphabeticCipher for AsciiCaesar {
-    fn new(k: u8) -> Self { AsciiCaesar(k) }
+    fn new(k: u8) -> Self { AsciiCaesar(k % 26) }
+    fn active_keyspace() -> Range<u8> { 0..25 }
     fn encrypt_byte(&self, c: u8) -> u8 {
         match c {
-            b'A' ... b'Z' => (((c - b'A') + self.0) % 26) + b'A',
-            b'a' ... b'z' => (((c - b'a') + self.0) % 26) + b'a',
+            b'A' ... b'Z' => (((c - b'A') + 26 + self.0) % 26) + b'A',
+            b'a' ... b'z' => (((c - b'a') + 26 + self.0) % 26) + b'a',
             _ => c,
         }
     }
     fn decrypt_byte(&self, c: u8) -> u8 {
         match c {
-            b'A' ... b'Z' => (((c - b'A') - self.0) % 26) + b'A',
-            b'a' ... b'z' => (((c - b'a') - self.0) % 26) + b'a',
+            b'A' ... b'Z' => (((c - b'A') + 26 - self.0) % 26) + b'A',
+            b'a' ... b'z' => (((c - b'a') + 26 - self.0) % 26) + b'a',
             _ => c,
         }
     }
@@ -156,14 +158,16 @@ impl NGrams {
     }
 }
 
-fn next_permutation(x: &mut [u8]) -> bool {
+fn next_permutation(x: &mut [u8], r: Range<u8>) -> bool {
     if x.len() == 0 { return false; }
-    x[0] += 1;
-    //if x[0] == 0 {
-    if x[0] == b'z'+1 { x[0] = 0; // hack for AsciiCaesar, at cost of completeness
-        return next_permutation(&mut x[1..]);
+    if x[0].wrapping_add(1) == r.end.wrapping_add(1) {
+        x[0] = r.start;
+        next_permutation(&mut x[1..], r)
     }
-    true
+    else {
+        x[0] = x[0].wrapping_add(1);
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -194,7 +198,7 @@ impl DistributionVector {
         let mut result = 0f64;
         loop {
             result += (*self.0.get(&key).unwrap_or(&0.0)).powi(2);
-            if !next_permutation(key.as_mut_slice()) { break; }
+            if !next_permutation(key.as_mut_slice(), 0..255) { break; }
         }
         result.sqrt()
     }
@@ -221,9 +225,8 @@ impl<'a> Sub<&'a DistributionVector> for DistributionVector {
 // keylen == vigenere key length
 // n = which size ngram to use
 //fn solve_vigenere<A: MonoalphabeticCipher>(expected_ngrams: NGrams, ciphertext: &[u8], keylen: usize, n: usize) {
-fn solve_vigenere<A: MonoalphabeticCipher>(expected_distribution: DistributionVector, ciphertext: &[u8], keylen: usize) -> Vec<Vec<u8>> {
+fn solve_vigenere<A: MonoalphabeticCipher>(expected_distribution: DistributionVector, ciphertext: &[u8], keylen: usize) -> Vec<u8> {
     let n = expected_distribution.dim();
-    //let partial_keys = vec![(vec![0; n], INFINITY); keylen-n];
     let mut partial_keys: Vec<Vec<u8>> = vec![];
     for i in 0..(keylen-n+1) {
         let mut key = vec![0u8; keylen];
@@ -246,12 +249,23 @@ fn solve_vigenere<A: MonoalphabeticCipher>(expected_distribution: DistributionVe
                 best.1 = current_distance;
             }
             println!("best: {:?}; current: {:?}, {}", best, &key, current_distance);
-            if !next_permutation(&mut key[i..i+n]) { break; }
+            if !next_permutation(&mut key[i..i+n], A::active_keyspace()) { break; }
         }
         partial_keys.push(best.0.unwrap());
     }
     // TODO: dynamic programming to ensure that ends of keys are consistent, and possibly to use more than 1 size of ngram
-    partial_keys
+    let mut key = vec![];
+    let mut partial_key_iter = partial_keys.iter().peekable();
+    while let Some(partial_key) = partial_key_iter.next() {
+        key.push(partial_key[0]);
+        if n > 1 {
+            if let None = partial_key_iter.peek() {
+                // last element, deal with overlap
+                key.push(partial_key[n-1]);
+            }
+        }
+    }
+    key
 }
 
 fn main() {
@@ -269,20 +283,25 @@ fire, and looked me over in his singular introspective fashion.
     PromoteMonoalphabetic(AsciiCaesar(13)).encrypt_slice(&mut rot13);
     println!("{}", std::str::from_utf8(&rot13).unwrap());
 
+    let key = b"abcdefgh";
     let mut vigenere = plaintext.clone();
-    VigenereCipher{ key: b"abc".to_vec(), underlying_cipher: PhantomData::<AsciiCaesar> }.encrypt_slice(&mut vigenere);
+    VigenereCipher{ key: key.to_vec(), underlying_cipher: PhantomData::<AsciiCaesar> }.encrypt_slice(&mut vigenere);
     println!("{}", std::str::from_utf8(&vigenere).unwrap());
 
     let mut sherlock_ngrams = NGrams::new();
     let sherlock = File::open("adventures_of_sherlock_holmes.txt").expect("run ./download_corpus.sh to download the corpus");
     sherlock_ngrams.train(2, sherlock).unwrap();
-    //let mut sherlock_ngrams_json = File::create("sherlock_ngrams.json").unwrap();
-    //serde_json::to_writer(&mut sherlock_ngrams_json, &sherlock_ngrams.serialize()).unwrap();
+    let mut sherlock_ngrams_json = File::create("sherlock_ngrams.json").unwrap();
+    serde_json::to_writer(&mut sherlock_ngrams_json, &sherlock_ngrams.serialize()).unwrap();
 
     let sherlock_distributions = sherlock_ngrams.to_distribution();
     println!("Starting the solver.");
-    let tmp = solve_vigenere::<AsciiCaesar>(sherlock_distributions[1].clone(), &vigenere, 3);
-    println!("{:?}", tmp);
+    let key2 = solve_vigenere::<AsciiCaesar>(sherlock_distributions[1].clone(), &vigenere, key.len());
+    println!("{:?}", key2);
+    let mut vigenere2 = vigenere.clone();
+    VigenereCipher{ key: key2, underlying_cipher: PhantomData::<AsciiCaesar> }.decrypt_slice(&mut vigenere2);
+    println!("{}", std::str::from_utf8(&vigenere2).unwrap());
+
     /* python samples:
 ngrams = [{k.decode('hex'): v for (k, v) in x.items()} for x in eval(open('sherlock_ngrams.json').read())]
 by_frequency = lambda d: sorted(d.items(), key=lambda (k,v):v,reverse=True)
