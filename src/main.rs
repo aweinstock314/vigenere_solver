@@ -25,6 +25,7 @@ use std::f64::INFINITY;
 use std::fs::File;
 use std::hash::Hash;
 use std::io;
+use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::ops::{Range, Sub};
 use std::process::exit;
@@ -314,7 +315,20 @@ fn ngrams_main(n: &str, input: &str, output: &str) {
 }
 
 fn crypt_main(dir: CryptionDirection, cipher: &str, key: &str, input: &str, output: &str) {
-    unimplemented!();
+    let c: Box<SliceCipher> = match cipher {
+        "asciicaesar" => Box::new(PromoteMonoalphabetic(AsciiCaesar::new(u8::from_str_radix(key,10).expect("error parsing key for crypt_main")))),
+        "vigenere" => Box::new(VigenereCipher { key: key.as_bytes().to_vec(), underlying_cipher: PhantomData::<AsciiCaesar> }), // TODO: more generic
+        _ => return,
+    };
+    let mut i = File::open(input).expect("error opening the input for crypt_main");
+    let mut o = File::create(output).expect("error opening the output for crypt_main");
+    let mut tmp = vec![];
+    i.read_to_end(&mut tmp).expect("error reading the input for crypt_main");
+    match dir {
+        CryptionDirection::Encrypt => c.encrypt_slice(&mut tmp),
+        CryptionDirection::Decrypt => c.decrypt_slice(&mut tmp),
+    }
+    o.write_all(&tmp).expect("error writing the output for crypt_main");
 }
 
 fn solver_main(cipher: &str, ngrams: &str, keylength: &str, ngramlength: &str, input: &str, output: &str) {
