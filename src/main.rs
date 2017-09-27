@@ -13,10 +13,15 @@ Copyright 2016 Avi Weinstock
    See the License for the specific language governing permissions and
    limitations under the License.
 */
-extern crate rustc_serialize;
+extern crate argparse;
+extern crate serde;
+extern crate rustc_hex;
 extern crate serde_json;
+#[macro_use] extern crate serde_derive;
 
-use rustc_serialize::hex::ToHex;
+use argparse::{ArgumentParser, Store};
+use rustc_hex::{FromHex, ToHex};
+use serde::Deserialize;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::env::args;
@@ -132,33 +137,39 @@ impl NGrams {
             for (i, window) in windows.iter_mut().enumerate() {
                 push(window, c);
                 if let Some(w) = sequence(window) {
-                    let mut x = self.grams[i].entry(w).or_insert(0);
+                    let x = self.grams[i].entry(w).or_insert(0);
                     *x += 1;
                 }
             }
         }
         Ok(())
     }
-    fn map_kv<K, V, F, G>(&self, f: F, g: G) -> Vec<HashMap<K, V>> where 
-            K: Eq + Hash, F: Fn(&[u8]) -> K,
-            G: Fn(&HashMap<Vec<u8>, usize>, usize) -> V {
-        let mut result = vec![];
-        for x in self.grams.iter() {
-            let mut tmp = HashMap::new();
-            for (k, v) in x { tmp.insert(f(k), g(x, *v)); }
-            result.push(tmp);
-        }
-        result
-    }
     fn serialize(&self) -> Vec<HashMap<String, usize>> {
-        self.map_kv(|k| k.to_hex(), |_, v| v)
+        map_kv(&self.grams, |k| k.to_hex(), |_, &v| v)
+    }
+    fn deserialize(ngrams: &Vec<HashMap<String, usize>>) -> Self {
+        let h = map_kv(ngrams, |k| k.from_hex().expect("key was not valid hex"), |_, &v| v);
+        NGrams { grams : h }
     }
     fn to_distribution(&self) -> Vec<DistributionVector> {
-        self.map_kv(|k| k.to_vec(), |hm, v| {
+        map_kv(&self.grams, |k| k.to_vec(), |hm, &v| {
             let total = hm.values().fold(0, |acc, x| acc+x) as f64;
             v as f64 / total
         }).into_iter().map(DistributionVector).collect()
     }
+}
+
+fn map_kv<K1, V1, K2, V2, F, G>(h: &Vec<HashMap<K1, V1>>, f: F, g: G) -> Vec<HashMap<K2, V2>> where 
+        K1: Eq + Hash, K2: Eq+Hash,
+        F: Fn(&K1) -> K2,
+        G: Fn(&HashMap<K1, V1>, &V1) -> V2 {
+    let mut result = vec![];
+    for x in h.iter() {
+        let mut tmp = HashMap::new();
+        for (k, v) in x { tmp.insert(f(k), g(x, v)); }
+        result.push(tmp);
+    }
+    result
 }
 
 fn next_permutation(x: &mut [u8], r: Range<u8>) -> bool {
@@ -273,8 +284,30 @@ fn solve_vigenere<A: MonoalphabeticCipher>(expected_distribution: DistributionVe
 
 enum CryptionDirection { Encrypt, Decrypt }
 
+#[derive(Serialize, Deserialize, Debug)]
+enum Action {
+    CalculateNGrams,
+    Encrypt,
+    Decrypt,
+    Solve
+}
+
+impl std::str::FromStr for Action {
+    type Err = serde_json::error::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s)
+    }
+}
+
 fn main() {
     let argv: Vec<String> = args().collect();
+    /*let mut action: Action = Action::CalculateNGrams;
+    {
+        let mut ap = ArgumentParser::new();
+        ap.refer(&mut action).add_argument("action", Store, "Which subprogram to run");
+        ap.parse_args_or_exit();
+    }
+    exit(1);*/
     fn usage() -> ! {
         println!("Usage: vigenere_solver SUBPROGRAM [ARGS...]");
         println!("\tngrams n corpus.txt ngrams.json");
